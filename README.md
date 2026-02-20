@@ -10,6 +10,17 @@ A C++ implementation of a Model Context Protocol Server with a pluggable module 
 
 \** Partially supported 
 
+## Claude Code Configuration
+
+```bash
+claude mcp add --transport http cpp_mcp_server http://localhost:8080/mcp
+```
+
+## Setup Logs Directory
+
+By default, the mcp server logs into ./logs directory (**MUST BE EXISTS**)
+You can redirect logs into your preferred dir using the `-l` command line option.
+
 ## Supported Transports
 
 | Transport  | Supported | Authorization | 
