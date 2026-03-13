@@ -1,15 +1,15 @@
 {
   "mcpServers": {
     "mcp-server": {
-      "command": "C:\\Users\\giuse\\Documents\\GITHUB\\mcp_server\\build\\mcp_server",
+      "command": "D:\\2026\\MCP\\mcp_server\\build\\Debug\\mcp_server.exe",
       "args": [
-        "-l","C:\\Users\\giuse\\Documents\\GITHUB\\mcp_server\\build\\logs",
-        "-p","C:\\Users\\giuse\\Documents\\GITHUB\\mcp_server\\build\\plugins"
+        "-l","D:\\2026\\MCP\\mcp_server\\logs",
+        "-p","D:\\2026\\MCP\\mcp_server\\build\\plugins"
       ],
       "env": {
         "CUSTOM_API_KEY_1": "your-api-key-here",
         "CUSTOM_API_KEY_2": "your-api-key-here",
-        "SAVE_DIR": "/path/to/save/directory"
+        "SAVE_DIR": "D:\\2026\\MCP\\mcp_server\\save\\directory"
       }
     }
   }

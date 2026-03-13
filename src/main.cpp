@@ -34,6 +34,7 @@
 #include "json.hpp"
 #include "utils/MCPBuilder.h"
 #include <csignal>
+#include <filesystem>
 
 using namespace popl;
 
@@ -108,6 +109,31 @@ int main(int argc, char **argv) {
         return -1;
     } catch (const std::exception& e) {
         std::cerr << "Exception: " << e.what() << std::endl;
+        return -1;
+    }
+
+    //============================================================================================
+    // resolve default relative paths for inspector/stdio launches
+    //============================================================================================
+    std::filesystem::path exePath = std::filesystem::absolute(argv[0]);
+    std::filesystem::path exeDir = exePath.parent_path();
+
+    if (plugins_directory == "./plugins") {
+        const std::filesystem::path fallbackPlugins = exeDir.parent_path() / "plugins";
+        if (std::filesystem::exists(fallbackPlugins)) {
+            plugins_directory = fallbackPlugins.string();
+        }
+    }
+
+    if (logs_directory == "./logs") {
+        const std::filesystem::path fallbackLogs = exeDir.parent_path().parent_path() / "logs";
+        logs_directory = fallbackLogs.string();
+    }
+
+    try {
+        std::filesystem::create_directories(logs_directory);
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to create logs directory: " << logs_directory << " - " << e.what() << std::endl;
         return -1;
     }
 

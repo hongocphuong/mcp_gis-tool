@@ -149,6 +149,11 @@ namespace vx::mcp {
                 // for now, we manage a max parser consecutive errors
                 LOG(ERROR) << "Error parsing JSON: " << e.what() << std::endl;
                 if (++parserErrors_ > MAX_PARSER_ERRORS) return false;
+            } catch (const std::exception& e) {
+                LOG(ERROR) << "Error handling request: " << e.what() << std::endl;
+                // Keep server alive even if a malformed request triggers non-parse JSON exceptions.
+            } catch (...) {
+                LOG(ERROR) << "Unknown error handling request." << std::endl;
             }
         }
 
@@ -203,9 +208,10 @@ namespace vx::mcp {
                         break;
                     }
                 } catch (const std::exception &e) {
-                    LOG(ERROR) << "Reader thread exception: " << e.what() << std::endl;
-                    isStopping_ = true;
-                    break;
+                    LOG(ERROR) << "Error handling async request: " << e.what() << std::endl;
+                    // Keep server alive for bad client payloads.
+                } catch (...) {
+                    LOG(ERROR) << "Unknown error handling async request." << std::endl;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
@@ -282,8 +288,11 @@ namespace vx::mcp {
         }
 
         // handle method not found case
-        int id = request["id"];
-        return MCPBuilder::Error(MCPBuilder::MethodNotFound, std::to_string(id), "Method not found");
+        json id = nullptr;
+        if (request.contains("id")) {
+            id = request["id"];
+        }
+        return MCPBuilder::Error(MCPBuilder::MethodNotFound, id, "Method not found");
     }
 
     bool Server::OverrideCallback(const std::string &method, std::function<json(const json &)> function) {
@@ -372,7 +381,6 @@ namespace vx::mcp {
         response["result"]["capabilities"]["tools"] = json::object();
         response["result"]["capabilities"]["prompts"] = json::object();
         response["result"]["capabilities"]["resources"]["subscribe"] = true;
-        response["result"]["capabilities"]["logging"] = json::object();
         response["result"]["serverInfo"]["name"] = name_;
         response["result"]["serverInfo"]["version"] = PROJECT_VERSION;
         return response;

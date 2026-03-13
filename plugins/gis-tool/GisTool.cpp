@@ -1,4 +1,6 @@
+#include <cstring>
 #include <exception>
+#include <mutex>
 #include <string>
 
 #include "PluginAPI.h"
@@ -10,16 +12,24 @@
 using json = nlohmann::json;
 
 static ToolRegistry registry;
-static bool gToolsRegistered = false;
+static std::once_flag gToolsRegisterFlag;
 
 static void EnsureToolsRegistered() {
-    if (gToolsRegistered) {
-        return;
-    }
+    std::call_once(gToolsRegisterFlag, []() {
+        RegisterWgs84Tools(registry);
+        RegisterGeoJsonTools(registry);
+    });
+}
 
-    RegisterWgs84Tools(registry);
-    RegisterGeoJsonTools(registry);
-    gToolsRegistered = true;
+static char* BuildResponseBuffer(const json& response) {
+    const std::string result = response.dump();
+    char* buffer = new char[result.length() + 1];
+#ifdef _WIN32
+    strcpy_s(buffer, result.length() + 1, result.c_str());
+#else
+    strcpy(buffer, result.c_str());
+#endif
+    return buffer;
 }
 
 const char* GetNameImpl() { return "gis-tools"; }
@@ -27,8 +37,12 @@ const char* GetVersionImpl() { return "1.7.0"; }
 PluginType GetTypeImpl() { return PLUGIN_TYPE_TOOLS; }
 
 int InitializeImpl() {
-    EnsureToolsRegistered();
-    return 1;
+    try {
+        EnsureToolsRegistered();
+        return 1;
+    } catch (...) {
+        return 0;
+    }
 }
 
 char* HandleRequestImpl(const char* req) {
@@ -37,56 +51,97 @@ char* HandleRequestImpl(const char* req) {
 
     try {
         EnsureToolsRegistered();
-        auto request = json::parse(req);
-        const std::string toolName = request["params"]["name"].get<std::string>();
-        const json arguments = request["params"].contains("arguments") ? request["params"]["arguments"] : json::object();
+
+        if (req == nullptr || req[0] == '\0') {
+            throw std::runtime_error("Request payload is empty");
+        }
+
+        const json request = json::parse(req, nullptr, false);
+        if (request.is_discarded()) {
+            throw std::runtime_error("Malformed JSON payload");
+        }
+
+        // Be tolerant with client variations: some callers send full JSON-RPC
+        // wrapper, others may pass params directly.
+        const json* params = nullptr;
+        if (request.is_object() && request.contains("params") && request["params"].is_object()) {
+            params = &request["params"];
+        } else if (request.is_object()) {
+            params = &request;
+        } else {
+            throw std::runtime_error("Request must be a JSON object");
+        }
+
+        std::string toolName;
+        if (params->contains("name") && (*params)["name"].is_string()) {
+            toolName = (*params)["name"].get<std::string>();
+        } else if (params->contains("tool") && (*params)["tool"].is_string()) {
+            toolName = (*params)["tool"].get<std::string>();
+        } else {
+            throw std::runtime_error("Missing tool name in params.name");
+        }
+
+        json arguments = json::object();
+        if (params->contains("arguments") && (*params)["arguments"].is_object()) {
+            arguments = (*params)["arguments"];
+        } else if (params->contains("args") && (*params)["args"].is_object()) {
+            arguments = (*params)["args"];
+        }
 
         const ToolResult result = registry.Execute(toolName, arguments);
 
-        json textContent;
-        textContent["type"] = "text";
-        textContent["text"] = result.text;
+        response["content"].push_back({
+            {"type", "text"},
+            {"text", result.text}
+        });
 
-        json jsonAsTextContent;
-        jsonAsTextContent["type"] = "text";
-        jsonAsTextContent["text"] = result.data.dump();
-
-        response["content"].push_back(textContent);
-        response["content"].push_back(jsonAsTextContent);
+        // Keep structured data as text for broad MCP client compatibility.
+        response["content"].push_back({
+            {"type", "text"},
+            {"text", result.data.dump()}
+        });
 
         response["isError"] = false;
     } catch (const std::exception& ex) {
-        json responseContent;
-        responseContent["type"] = "text";
-        responseContent["text"] = std::string("Invalid request: ") + ex.what();
-
-        response["content"].push_back(responseContent);
+        response["content"].push_back({
+            {"type", "text"},
+            {"text", std::string("Invalid request: ") + ex.what()}
+        });
+        response["isError"] = true;
+    } catch (...) {
+        response["content"].push_back({
+            {"type", "text"},
+            {"text", "Invalid request: unknown error"}
+        });
         response["isError"] = true;
     }
 
-    std::string result = response.dump();
-    char* buffer = new char[result.length() + 1];
-#ifdef _WIN32
-    strcpy_s(buffer, result.length() + 1, result.c_str());
-#else
-    strcpy(buffer, result.c_str());
-#endif
-
-    return buffer;
+    return BuildResponseBuffer(response);
 }
 
 void ShutdownImpl() {
 }
 
 int GetToolCountImpl() {
-    EnsureToolsRegistered();
-    return static_cast<int>(registry.GetTools().size());
+    try {
+        EnsureToolsRegistered();
+        return static_cast<int>(registry.GetTools().size());
+    } catch (...) {
+        return 0;
+    }
 }
 
 const PluginTool* GetToolImpl(int index) {
-    EnsureToolsRegistered();
-    if (index < 0 || index >= GetToolCountImpl()) return nullptr;
-    return &registry.GetTools()[index];
+    try {
+        EnsureToolsRegistered();
+        const auto& tools = registry.GetTools();
+        if (index < 0 || index >= static_cast<int>(tools.size())) {
+            return nullptr;
+        }
+        return &tools[index];
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 static PluginAPI plugin = {
