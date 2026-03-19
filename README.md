@@ -33,9 +33,9 @@ You can redirect logs into your preferred dir using the `-l` command line option
 
 | Platform     | Supported | Compiler |
 |--------------|-----------|----------|
-| Windows      | ✅        | MINGW64  |
+| Windows      | ✅        | MSVC (VS2022), MINGW64  |
 | Ubuntu Linux | ✅        | GCC      |
-| Mac OS       | ✅        | GCC      |
+| Mac OS       | ✅        | Clang/GCC |
 
 ## How to compile
 
@@ -45,14 +45,20 @@ Clone the repository on your local machine
 git clone https://github.com/peppemas/mcp_server.git
 ```
 
-Compile
+### Build with CMake Presets (recommended on Windows)
 
 ```commandline
 cd mcp_server
-mkdir build
-cd build
-cmake ..
-make
+cmake --preset vs2022-x64
+cmake --build --preset vs2022-debug
+```
+
+### Build with classic CMake (Linux/macOS)
+
+```commandline
+cd mcp_server
+cmake -S . -B build
+cmake --build build -j
 ```
 
 ## MCP Server Architecture
@@ -111,25 +117,16 @@ depending on the operating system:
 
 #### Example Plugins
 
-1. **Weather Plugin**:  
-   The Weather plugin allows the server to provide weather-related functionalities. This plugin can process requests
-   related to weather data, such as current temperature, forecasts, and other meteorological information. The plugin
-   fetches data from third-party APIs to ensure up-to-date and accurate information. It demonstrates how the MCP server
-   can be extended to offer services that require external data integration.
+1. **Boolean Tools**:  
+  Polygon and geometry boolean operations.
 
-2. **Sleep Plugin**:  
-   The Sleep plugin introduces delay or "sleep" functionality within the server's processing pipeline. This can be
-   useful for simulating response delays or managing timed operations in protocols. Developers can leverage this plugin
-   to build and test features related to time-based operations without altering core server behavior. It highlights how
-   custom plugins can target specific, niche use cases.
+2. **Classification Tools**:  
+  Feature classification and geometry-type helpers.
 
-3. **Code Review Plugin**:  
-   The Code Review plugin is designed to assist developers in performing automated code reviews. This plugin analyzes
-   code submitted to the server and provides helpful feedback, such as identifying potential bugs, code smells, and
-   optimization opportunities. It follows standard coding practices and can be configured to enforce specific style
-   guides (e.g., Google C++ Style Guide). Additionally, it supports multi-language inspection, ensuring compatibility
-   with various programming languages. The plugin can integrate with version control systems to retrieve code changes
-   directly for assessment, making it a valuable tool for collaborative development workflows.
+3. **Measurement Tools**:  
+  Geospatial utilities including `measurement.*` tools for distance, bearing, area,
+  centroid, bbox, and other GeoJSON-based operations.
+  See: `plugins/MEASUREMENT_TOOLS.md`
 
 ## Claude Desktop Configuration
 
@@ -153,7 +150,6 @@ depending on the operating system:
 }
 ```
 **NOTE**: In the "env" block you can pass parameters to your plugins
-e
 
 ### TODO LIST
 

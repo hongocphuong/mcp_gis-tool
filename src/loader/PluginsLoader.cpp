@@ -23,7 +23,39 @@
 
 #include "PluginsLoader.h"
 
+#include <algorithm>
+#include <cctype>
+#include <unordered_set>
+#include <vector>
+
 namespace vx::mcp {
+
+    namespace {
+        std::string ToLower(std::string value) {
+            std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            return value;
+        }
+
+        int BuildConfigPriority(const std::filesystem::path& path) {
+            const std::string lowered = ToLower(path.string());
+            if (lowered.find("\\debug\\") != std::string::npos || lowered.find("/debug/") != std::string::npos) {
+                return 0;
+            }
+            if (lowered.find("\\relwithdebinfo\\") != std::string::npos ||
+                lowered.find("/relwithdebinfo/") != std::string::npos) {
+                return 1;
+            }
+            if (lowered.find("\\minsizerel\\") != std::string::npos || lowered.find("/minsizerel/") != std::string::npos) {
+                return 2;
+            }
+            if (lowered.find("\\release\\") != std::string::npos || lowered.find("/release/") != std::string::npos) {
+                return 3;
+            }
+            return 4;
+        }
+    }
 
     PluginsLoader::PluginsLoader() = default;
 
@@ -33,6 +65,7 @@ namespace vx::mcp {
 
     bool PluginsLoader::LoadPlugins(const std::string& directory) {
         try {
+            std::vector<std::filesystem::path> candidates;
             for (const auto& entry : std::filesystem::recursive_directory_iterator(directory)) {
                 if (entry.is_regular_file()) {
                     std::string extension = entry.path().extension().string();
@@ -48,10 +81,40 @@ namespace vx::mcp {
     #endif
 #endif
                     {
-                        LoadPlugin(entry.path().string());
+                        candidates.push_back(entry.path());
                     }
                 }
             }
+
+            std::sort(candidates.begin(), candidates.end(), [](const std::filesystem::path& a, const std::filesystem::path& b) {
+                const std::string aName = ToLower(a.filename().string());
+                const std::string bName = ToLower(b.filename().string());
+                if (aName != bName) {
+                    return aName < bName;
+                }
+
+                const int aPriority = BuildConfigPriority(a);
+                const int bPriority = BuildConfigPriority(b);
+                if (aPriority != bPriority) {
+                    return aPriority < bPriority;
+                }
+
+                return a.string() < b.string();
+            });
+
+            std::unordered_set<std::string> loadedFileNames;
+            for (const auto& candidate : candidates) {
+                const std::string normalizedName = ToLower(candidate.filename().string());
+                if (loadedFileNames.find(normalizedName) != loadedFileNames.end()) {
+                    LOG(WARNING) << "Skipping duplicate plugin binary: " << candidate.string() << std::endl;
+                    continue;
+                }
+
+                if (LoadPlugin(candidate.string())) {
+                    loadedFileNames.insert(normalizedName);
+                }
+            }
+
             return true;
         } catch (const std::exception& ex) {
             LOG(ERROR) << "Error loading plugins: " << ex.what() << std::endl;

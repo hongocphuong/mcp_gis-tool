@@ -1,4 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
+
+# Some environments expose a non-MSVC "rc" command (for example from Yarn),
+# which breaks CMake configure on Windows. Force the Windows SDK resource
+# compiler command name when an invalid cached path is detected.
+if(WIN32)
+    if(DEFINED CMAKE_RC_COMPILER AND CMAKE_RC_COMPILER MATCHES "Yarn[/\\]bin[/\\]rc$")
+        set(CMAKE_RC_COMPILER rc CACHE FILEPATH "Windows resource compiler" FORCE)
+    elseif(NOT DEFINED CMAKE_RC_COMPILER)
+        set(CMAKE_RC_COMPILER rc CACHE FILEPATH "Windows resource compiler")
+    endif()
+endif()
+
 project(mcp_server)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -36,7 +48,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE
         src/transport
         src/interface
         libs_tier_01/aixlog-1.5.0/include
-        libs_tier_01/alpaca-0.2.1/include
         ${CMAKE_CURRENT_BINARY_DIR}
 )
 
@@ -64,11 +75,5 @@ if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     endif()
 endif()
 
-# Example Plugins
-add_subdirectory(plugins/weather)
-add_subdirectory(plugins/sleep)
-add_subdirectory(plugins/code-review)
-add_subdirectory(plugins/bacio-quote)
-add_subdirectory(plugins/notification)
-add_subdirectory(plugins/echo-text)
-add_subdirectory(plugins/gis-tool)
+# Plugins
+add_subdirectory(plugins)
