@@ -6,6 +6,7 @@ namespace GeoMath {
 
 inline constexpr double kPi = 3.14159265358979323846;
 inline constexpr double kEarthRadiusMeters = 6371008.8;
+inline constexpr double kEpsilon = 1e-12;
 
 double DegreesToRadians(double degrees);
 double RadiansToDegrees(double radians);

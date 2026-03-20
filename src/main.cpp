@@ -228,7 +228,9 @@ int main(int argc, char **argv) {
                         if (res_ptr) {
                             try {
                                 response["result"] = json::parse(res_ptr);
-                                response["result"]["isError"] = false;
+                                if (!response["result"].contains("isError") || !response["result"]["isError"].is_boolean()) {
+                                    response["result"]["isError"] = false;
+                                }
                             } catch (const json::parse_error& e) {
                                 response["result"]["isError"] = true;
                                 response["result"]["content"] = json::array();

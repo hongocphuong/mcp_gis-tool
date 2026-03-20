@@ -29,4 +29,9 @@ bool PointInPolygon(double lon, double lat, const PolygonRings& polygon);
 // Proximity
 double PointToSegmentDistanceMeters(const LonLatPoint& p, const LonLatPoint& a, const LonLatPoint& b);
 
+// Signed area of a closed planar ring using the cross-product (shoelace) formula.
+// Returns a positive value for CCW winding, negative for CW (standard mathematical convention).
+// The ring must be closed (first == last point). Returns 0.0 if fewer than 4 points.
+double ComputeRingSignedArea(const std::vector<PlanarPoint>& closedRing);
+
 } // namespace GeoAlgorithms

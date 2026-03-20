@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include "json.hpp"
+
 // PlanarPoint: 2-D Cartesian coordinate for planar geometry computations.
 struct PlanarPoint {
     double x;
@@ -25,4 +27,9 @@ struct Bbox {
 struct PolygonRings {
     std::vector<LonLatPoint> outerRing;
     std::vector<std::vector<LonLatPoint>> holes;
+};
+
+struct PointFeatureData {
+    LonLatPoint point;
+    nlohmann::json feature;
 };

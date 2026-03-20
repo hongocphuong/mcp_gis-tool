@@ -108,8 +108,9 @@ bool PointInRing(double lon, double lat, const std::vector<LonLatPoint>& ring) {
         const double xj = ring[j].lon;
         const double yj = ring[j].lat;
 
+        const double dy = yj - yi;
         const bool intersects = ((yi > lat) != (yj > lat)) &&
-            (lon < (xj - xi) * (lat - yi) / (yj - yi + 1e-20) + xi);
+            (lon < (xj - xi) * (lat - yi) / dy + xi);
         if (intersects) {
             inside = !inside;
         }
@@ -163,6 +164,18 @@ double PointToSegmentDistanceMeters(const LonLatPoint& p, const LonLatPoint& a, 
     const double dx = pp.x - projX;
     const double dy = pp.y - projY;
     return std::sqrt(dx * dx + dy * dy);
+}
+
+double ComputeRingSignedArea(const std::vector<PlanarPoint>& closedRing) {
+    if (closedRing.size() < 4) {
+        return 0.0;
+    }
+
+    double area = 0.0;
+    for (size_t i = 0; i + 1 < closedRing.size(); ++i) {
+        area += closedRing[i].x * closedRing[i + 1].y - closedRing[i + 1].x * closedRing[i].y;
+    }
+    return 0.5 * area;
 }
 
 } // namespace GeoAlgorithms

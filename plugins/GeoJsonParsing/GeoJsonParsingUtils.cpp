@@ -4,8 +4,6 @@
 
 namespace GeoJsonParsingUtils {
 
-namespace {
-
 bool IsValidCoordinate(double latitude, double longitude) {
     return latitude >= -90.0 && latitude <= 90.0 && longitude >= -180.0 && longitude <= 180.0;
 }
@@ -15,8 +13,6 @@ void ValidateCoordinate(double latitude, double longitude) {
         throw std::invalid_argument("WGS84 coordinates out of range. Latitude must be [-90, 90], longitude must be [-180, 180].");
     }
 }
-
-} // namespace
 
 nlohmann::json ParseJsonString(const std::string& value, const std::string& fieldName) {
     const nlohmann::json parsed = nlohmann::json::parse(value, nullptr, false);
@@ -58,8 +54,16 @@ nlohmann::json ParseOptionsArgument(const nlohmann::json& arguments) {
 }
 
 LonLatPoint ParseCoordinateArray(const nlohmann::json& coordinates) {
-    if (!coordinates.is_array() || coordinates.size() < 2 || !coordinates[0].is_number() || !coordinates[1].is_number()) {
-        throw std::invalid_argument("Point coordinates must be [lon, lat].");
+    if (!coordinates.is_array()) {
+        throw std::invalid_argument("Point coordinates must be a JSON array [lon, lat].");
+    }
+    if (coordinates.size() < 2) {
+        throw std::invalid_argument(
+            "Point coordinates must have at least 2 elements [lon, lat], got " +
+            std::to_string(coordinates.size()) + ".");
+    }
+    if (!coordinates[0].is_number() || !coordinates[1].is_number()) {
+        throw std::invalid_argument("Point coordinates [lon, lat] must be numeric values.");
     }
 
     const double lon = coordinates[0].get<double>();
@@ -222,6 +226,45 @@ nlohmann::json ParseFeatureCollectionLike(const nlohmann::json& node, const std:
     }
 
     return node;
+}
+
+nlohmann::json ExtractGeometry(const nlohmann::json& node) {
+    if (!node.is_object()) {
+        return node;
+    }
+    if (node.contains("type") && node["type"] == "Feature") {
+        if (!node.contains("geometry") || node["geometry"].is_null()) {
+            throw std::invalid_argument("Feature has null geometry.");
+        }
+        return node["geometry"];
+    }
+    return node;
+}
+
+std::string GetGeometryType(const nlohmann::json& geom) {
+    if (!geom.is_object() || !geom.contains("type") || !geom["type"].is_string()) {
+        throw std::invalid_argument("GeoJSON object must have a string 'type' field.");
+    }
+    return geom["type"].get<std::string>();
+}
+
+PlanarPoint ParseCoordinatePair(const nlohmann::json& coord) {
+    if (!coord.is_array() || coord.size() < 2 || !coord[0].is_number() || !coord[1].is_number()) {
+        throw std::invalid_argument("Coordinate must be [x, y].");
+    }
+    return {coord[0].get<double>(), coord[1].get<double>()};
+}
+
+std::vector<PlanarPoint> ParseCoordinatePairArray(const nlohmann::json& arr) {
+    if (!arr.is_array()) {
+        throw std::invalid_argument("Expected an array of coordinate pairs.");
+    }
+    std::vector<PlanarPoint> pts;
+    pts.reserve(arr.size());
+    for (const auto& c : arr) {
+        pts.push_back(ParseCoordinatePair(c));
+    }
+    return pts;
 }
 
 } // namespace GeoJsonParsingUtils

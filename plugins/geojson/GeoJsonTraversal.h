@@ -2,12 +2,11 @@
 
 #include <vector>
 #include "GisTypes.h"
-
 #include "json.hpp"
 
-using json = nlohmann::json;
+namespace GeoJsonTraversal {
 
+std::vector<LonLatPoint> CollectCoordinates(const nlohmann::json& geojson);
+std::vector<PolygonRings> CollectPolygons(const nlohmann::json& geojson);
 
-
-std::vector<LonLatPoint> CollectCoordinates(const json& geojson);
-std::vector<PolygonRings> CollectPolygons(const json& geojson);
+} // namespace GeoJsonTraversal

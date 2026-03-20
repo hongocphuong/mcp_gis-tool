@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 
+using json = nlohmann::json;
+
 void ToolRegistry::Register(const ToolDefinition& definition) {
     const std::string toolName = definition.meta.name;
     if (handlers_.find(toolName) != handlers_.end()) {

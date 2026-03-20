@@ -12,12 +12,23 @@ add_library(gistool SHARED
     ${CMAKE_CURRENT_SOURCE_DIR}/GisTool.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ToolRegistry.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/geojson/GeoJsonTraversal.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Aggregation/AggregationCommon.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Aggregation/AggregationSchemas.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Aggregation/AggregationTool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Boolean/BooleanSchemas.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Boolean/BooleanTools.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Classification/ClassificationSchemas.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Classification/ClassificationTool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/FeatureBuilders/FeatureBuilders.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/GeoMath/GeoMath.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/GeoAlgorithms/GeoAlgorithms.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/GeoJsonParsing/GeoJsonParsingUtils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/GeoUnits/GeoUnits.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Measurement/MeasurementSchemas.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Measurement/MeasurementTools.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Transformation/TransformationSchemas.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Transformation/TransformationGeometryOps.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Transformation/TransformationTools.cpp
 )
 
 if(UNIX)

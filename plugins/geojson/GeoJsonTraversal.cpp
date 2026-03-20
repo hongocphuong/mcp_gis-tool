@@ -4,12 +4,11 @@
 #include <string>
 #include <vector>
 #include "GisTypes.h"
+#include "GeoJsonParsing/GeoJsonParsingUtils.h"
+
+using json = nlohmann::json;
 
 namespace {
-
-bool IsValidCoordinate(double latitude, double longitude) {
-    return latitude >= -90.0 && latitude <= 90.0 && longitude >= -180.0 && longitude <= 180.0;
-}
 
 LonLatPoint ParseCoordinate(const json& node) {
     if (!node.is_array() || node.size() < 2 || !node[0].is_number() || !node[1].is_number()) {
@@ -18,7 +17,7 @@ LonLatPoint ParseCoordinate(const json& node) {
 
     const double lon = node[0].get<double>();
     const double lat = node[1].get<double>();
-    if (!IsValidCoordinate(lat, lon)) {
+    if (!GeoJsonParsingUtils::IsValidCoordinate(lat, lon)) {
         throw std::invalid_argument("GeoJSON contains coordinate out of WGS84 range.");
     }
 
@@ -210,7 +209,9 @@ void CollectPolygonsFromGeometry(const json& geometry, std::vector<PolygonRings>
     }
 }
 
-} // namespace
+} // anonymous namespace
+
+namespace GeoJsonTraversal {
 
 std::vector<LonLatPoint> CollectCoordinates(const json& geojson) {
     if (!geojson.is_object() || !geojson.contains("type") || !geojson["type"].is_string()) {
@@ -253,3 +254,5 @@ std::vector<PolygonRings> CollectPolygons(const json& geojson) {
 
     return polygons;
 }
+
+} // namespace GeoJsonTraversal

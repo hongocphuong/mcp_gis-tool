@@ -1,0 +1,28 @@
+# Build and CMake artifacts
+/build/
+/cmake-build-*/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+install_manifest.txt
+
+# Common generated build folders (multi-config generators)
+/Debug/
+/Release/
+/RelWithDebInfo/
+/MinSizeRel/
+/x64/
+
+# Runtime output
+/logs/
+
+# Python
+/.venv/
+**/__pycache__/
+*.pyc
+
+# IDE/agent workspace state
+/.vs/
+/.claude/

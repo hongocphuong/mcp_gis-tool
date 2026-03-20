@@ -13,6 +13,11 @@
 #include "GeoAlgorithms/GeoAlgorithms.h"
 #include "GeoMath/GeoMath.h"
 #include "GeoJsonParsing/GeoJsonParsingUtils.h"
+#include "FeatureBuilders/FeatureBuilders.h"
+#include "GeoUnits/GeoUnits.h"
+#include "MeasurementSchemas.h"
+
+using json = nlohmann::json;
 
 namespace {
 
@@ -41,268 +46,9 @@ using GeoJsonParsingUtils::ParseLineOrMultiLine;
 using GeoJsonParsingUtils::ParseLineStringPoints;
 using GeoJsonParsingUtils::ParseOptionsArgument;
 using GeoJsonParsingUtils::ParsePointLike;
+using GeoJsonTraversal::CollectCoordinates;
+using GeoJsonTraversal::CollectPolygons;
 
-constexpr char kAlongSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "line": {"type": ["string", "object"]},
-        "distance": {"type": "number"},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["line", "distance"],
-    "additionalProperties": false
-})";
-
-constexpr char kAreaSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "polygon": {"type": ["string", "object"]}
-    },
-    "required": ["polygon"],
-    "additionalProperties": false
-})";
-
-constexpr char kGeoJsonSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "geojson": {"type": ["string", "object"]},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["geojson"],
-    "additionalProperties": false
-})";
-
-constexpr char kBboxSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "bbox": {"type": ["string", "array"]},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["bbox"],
-    "additionalProperties": false
-})";
-
-constexpr char kBearingSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "point1": {"type": ["string", "object", "array"]},
-        "point2": {"type": ["string", "object", "array"]},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["point1", "point2"],
-    "additionalProperties": false
-})";
-
-constexpr char kDestinationSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "origin": {"type": ["string", "object", "array"]},
-        "distance": {"type": "number"},
-        "bearing": {"type": "number"},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["origin", "distance", "bearing"],
-    "additionalProperties": false
-})";
-
-constexpr char kDistanceSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "point1": {"type": ["string", "object", "array"]},
-        "point2": {"type": ["string", "object", "array"]},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["point1", "point2"],
-    "additionalProperties": false
-})";
-
-constexpr char kLengthSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "geojson": {"type": ["string", "object"]},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["geojson"],
-    "additionalProperties": false
-})";
-
-constexpr char kPointToLineSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "point": {"type": ["string", "object", "array"]},
-        "line": {"type": ["string", "object"]},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["point", "line"],
-    "additionalProperties": false
-})";
-
-constexpr char kGreatCircleSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "start": {"type": ["string", "object", "array"]},
-        "end": {"type": ["string", "object", "array"]},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["start", "end"],
-    "additionalProperties": false
-})";
-
-constexpr char kPolygonTangentsSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "point": {"type": ["string", "object", "array"]},
-        "polygon": {"type": ["string", "object"]}
-    },
-    "required": ["point", "polygon"],
-    "additionalProperties": false
-})";
-
-std::string ReadUnits(const json& options, const std::string& defaultUnits = "kilometers") {
-    if (!options.contains("units")) {
-        return defaultUnits;
-    }
-
-    const std::string units = options.at("units").get<std::string>();
-    return units;
-}
-
-double MetersPerUnit(const std::string& units) {
-    if (units == "meters" || units == "meter") {
-        return 1.0;
-    }
-    if (units == "kilometers" || units == "kilometer") {
-        return 1000.0;
-    }
-    if (units == "miles" || units == "mile") {
-        return 1609.344;
-    }
-    if (units == "nauticalmiles" || units == "nauticalmile") {
-        return 1852.0;
-    }
-    if (units == "radians" || units == "radian") {
-        return kEarthRadiusMeters;
-    }
-    if (units == "degrees" || units == "degree") {
-        return kEarthRadiusMeters * (kPi / 180.0);
-    }
-
-    throw std::invalid_argument("Unsupported units: " + units + ". Supported: meters, kilometers, miles, nauticalmiles, degrees, radians.");
-}
-
-double ToMeters(double value, const std::string& units) {
-    return value * MetersPerUnit(units);
-}
-
-double FromMeters(double meters, const std::string& units) {
-    return meters / MetersPerUnit(units);
-}
-
-json BuildPointFeature(double lon, double lat, const json& options = json::object()) {
-    json properties = json::object();
-    if (options.contains("properties") && options["properties"].is_object()) {
-        properties = options["properties"];
-    }
-
-    json feature = {
-        {"type", "Feature"},
-        {"properties", properties},
-        {"geometry", {
-            {"type", "Point"},
-            {"coordinates", json::array({lon, lat})}
-        }}
-    };
-
-    if (options.contains("id")) {
-        feature["id"] = options["id"];
-    }
-    if (options.contains("bbox") && options["bbox"].is_array()) {
-        feature["bbox"] = options["bbox"];
-    }
-
-    return feature;
-}
-
-Bbox ComputeBbox(const json& geojsonNode) {
-    const auto coords = CollectCoordinates(geojsonNode);
-
-    Bbox bbox{
-        coords.front().lon,
-        coords.front().lat,
-        coords.front().lon,
-        coords.front().lat
-    };
-
-    for (const auto& c : coords) {
-        bbox.minX = std::min(bbox.minX, c.lon);
-        bbox.minY = std::min(bbox.minY, c.lat);
-        bbox.maxX = std::max(bbox.maxX, c.lon);
-        bbox.maxY = std::max(bbox.maxY, c.lat);
-    }
-
-    return bbox;
-}
-
-Bbox ParseBbox(const json& bboxNode) {
-    if (!bboxNode.is_array() || bboxNode.size() != 4) {
-        throw std::invalid_argument("bbox must be an array [minX, minY, maxX, maxY].");
-    }
-    if (!bboxNode[0].is_number() || !bboxNode[1].is_number() || !bboxNode[2].is_number() || !bboxNode[3].is_number()) {
-        throw std::invalid_argument("bbox coordinates must be numbers.");
-    }
-
-    Bbox bbox{
-        bboxNode[0].get<double>(),
-        bboxNode[1].get<double>(),
-        bboxNode[2].get<double>(),
-        bboxNode[3].get<double>()
-    };
-
-    if (bbox.minX > bbox.maxX || bbox.minY > bbox.maxY) {
-        throw std::invalid_argument("bbox must satisfy minX <= maxX and minY <= maxY.");
-    }
-
-    return bbox;
-}
-
-json BboxToPolygonFeature(const Bbox& bbox, const json& options = json::object()) {
-    const json ring = json::array({
-        json::array({bbox.minX, bbox.minY}),
-        json::array({bbox.maxX, bbox.minY}),
-        json::array({bbox.maxX, bbox.maxY}),
-        json::array({bbox.minX, bbox.maxY}),
-        json::array({bbox.minX, bbox.minY})
-    });
-
-    json feature = {
-        {"type", "Feature"},
-        {"properties", json::object()},
-        {"geometry", {
-            {"type", "Polygon"},
-            {"coordinates", json::array({ring})}
-        }}
-    };
-
-    if (options.contains("properties") && options["properties"].is_object()) {
-        feature["properties"] = options["properties"];
-    }
-    if (options.contains("id")) {
-        feature["id"] = options["id"];
-    }
-
-    return feature;
-}
 
 LonLatPoint CenterOfMass(const json& geojsonNode) {
     const auto polygons = CollectPolygons(geojsonNode);
@@ -351,7 +97,7 @@ LonLatPoint CenterOfMass(const json& geojsonNode) {
 
 json DistanceResultObject(double meters, const std::string& units) {
     return {
-        {"value", FromMeters(meters, units)},
+        {"value", GeoUnits::FromMeters(meters, units)},
         {"units", units}
     };
 }
@@ -360,13 +106,13 @@ ToolResult MeasurementAlong(const json& arguments) {
     const auto lineNode = ParseJsonLikeArgument(arguments, "line");
     const auto options = ParseOptionsArgument(arguments);
 
-    const std::string units = ReadUnits(options, "kilometers");
+    const std::string units = GeoUnits::ReadUnits(options, "kilometers");
     const double distance = arguments.at("distance").get<double>();
     if (distance < 0.0) {
         throw std::invalid_argument("distance must be >= 0.");
     }
 
-    const double targetMeters = ToMeters(distance, units);
+    const double targetMeters = GeoUnits::ToMeters(distance, units);
     const auto points = ParseLineStringPoints(lineNode, "line");
 
     double accumulated = 0.0;
@@ -378,7 +124,7 @@ ToolResult MeasurementAlong(const json& arguments) {
             const LonLatPoint p = DestinationPoint(points[i - 1].lat, points[i - 1].lon, bearing, remaining);
             return {
                 "Computed point along line.",
-                BuildPointFeature(p.lon, p.lat)
+                FeatureBuilders::BuildPointFeature(p.lon, p.lat)
             };
         }
         accumulated += segLen;
@@ -387,7 +133,7 @@ ToolResult MeasurementAlong(const json& arguments) {
     const auto& last = points.back();
     return {
         "Distance exceeds line length; returned line endpoint.",
-        BuildPointFeature(last.lon, last.lat)
+        FeatureBuilders::BuildPointFeature(last.lon, last.lat)
     };
 }
 
@@ -414,7 +160,7 @@ ToolResult MeasurementArea(const json& arguments) {
 
 ToolResult MeasurementBbox(const json& arguments) {
     const auto geojsonNode = ParseJsonLikeArgument(arguments, "geojson");
-    const Bbox bbox = ComputeBbox(geojsonNode);
+    const Bbox bbox = FeatureBuilders::ComputeBbox(geojsonNode);
 
     return {
         "Computed bounding box.",
@@ -425,11 +171,11 @@ ToolResult MeasurementBbox(const json& arguments) {
 ToolResult MeasurementBboxPolygon(const json& arguments) {
     const auto bboxNode = ParseJsonLikeArgument(arguments, "bbox");
     const auto options = ParseOptionsArgument(arguments);
-    const Bbox bbox = ParseBbox(bboxNode);
+    const Bbox bbox = FeatureBuilders::ParseBbox(bboxNode);
 
     return {
         "Converted bbox to polygon.",
-        BboxToPolygonFeature(bbox, options)
+        FeatureBuilders::BboxToPolygonFeature(bbox, options)
     };
 }
 
@@ -455,15 +201,15 @@ ToolResult MeasurementCenter(const json& arguments) {
     const auto geojsonNode = ParseJsonLikeArgument(arguments, "geojson");
     const auto options = ParseOptionsArgument(arguments);
 
-    ParseFeatureCollectionLike(geojsonNode, "geojson");
+    const json validatedNode = ParseFeatureCollectionLike(geojsonNode, "geojson");
 
-    const Bbox bbox = ComputeBbox(geojsonNode);
+    const Bbox bbox = FeatureBuilders::ComputeBbox(validatedNode);
     const double centerLon = (bbox.minX + bbox.maxX) / 2.0;
     const double centerLat = (bbox.minY + bbox.maxY) / 2.0;
 
     return {
         "Computed FeatureCollection center point.",
-        BuildPointFeature(centerLon, centerLat, options)
+        FeatureBuilders::BuildPointFeature(centerLon, centerLat, options)
     };
 }
 
@@ -474,7 +220,7 @@ ToolResult MeasurementCenterOfMass(const json& arguments) {
     const LonLatPoint com = CenterOfMass(geojsonNode);
     return {
         "Computed center of mass.",
-        BuildPointFeature(com.lon, com.lat, options)
+        FeatureBuilders::BuildPointFeature(com.lon, com.lat, options)
     };
 }
 
@@ -487,7 +233,7 @@ ToolResult MeasurementCentroid(const json& arguments) {
 
     return {
         "Computed centroid.",
-        BuildPointFeature(centroid.lon, centroid.lat, options)
+        FeatureBuilders::BuildPointFeature(centroid.lon, centroid.lat, options)
     };
 }
 
@@ -495,18 +241,18 @@ ToolResult MeasurementDestination(const json& arguments) {
     const LonLatPoint origin = ParsePointLike(ParseJsonLikeArgument(arguments, "origin"));
     const auto options = ParseOptionsArgument(arguments);
 
-    const std::string units = ReadUnits(options, "kilometers");
+    const std::string units = GeoUnits::ReadUnits(options, "kilometers");
     const double distance = arguments.at("distance").get<double>();
     const double bearing = arguments.at("bearing").get<double>();
     if (distance < 0.0) {
         throw std::invalid_argument("distance must be >= 0.");
     }
 
-    const LonLatPoint destination = DestinationPoint(origin.lat, origin.lon, bearing, ToMeters(distance, units));
+    const LonLatPoint destination = DestinationPoint(origin.lat, origin.lon, bearing, GeoUnits::ToMeters(distance, units));
 
     return {
         "Computed destination point.",
-        BuildPointFeature(destination.lon, destination.lat, options)
+        FeatureBuilders::BuildPointFeature(destination.lon, destination.lat, options)
     };
 }
 
@@ -515,7 +261,7 @@ ToolResult MeasurementDistance(const json& arguments) {
     const LonLatPoint p2 = ParsePointLike(ParseJsonLikeArgument(arguments, "point2"));
     const auto options = ParseOptionsArgument(arguments);
 
-    const std::string units = ReadUnits(options, "kilometers");
+    const std::string units = GeoUnits::ReadUnits(options, "kilometers");
     const double meters = HaversineDistanceMeters(p1.lat, p1.lon, p2.lat, p2.lon);
 
     return {
@@ -526,11 +272,11 @@ ToolResult MeasurementDistance(const json& arguments) {
 
 ToolResult MeasurementEnvelope(const json& arguments) {
     const auto geojsonNode = ParseJsonLikeArgument(arguments, "geojson");
-    const Bbox bbox = ComputeBbox(geojsonNode);
+    const Bbox bbox = FeatureBuilders::ComputeBbox(geojsonNode);
 
     return {
         "Computed envelope polygon.",
-        BboxToPolygonFeature(bbox)
+        FeatureBuilders::BboxToPolygonFeature(bbox)
     };
 }
 
@@ -539,7 +285,7 @@ ToolResult MeasurementLength(const json& arguments) {
     const auto options = ParseOptionsArgument(arguments);
 
     const auto lines = ParseLineOrMultiLine(geojsonNode, "geojson");
-    const std::string units = ReadUnits(options, "kilometers");
+    const std::string units = GeoUnits::ReadUnits(options, "kilometers");
 
     double totalMeters = 0.0;
     for (const auto& line : lines) {
@@ -562,7 +308,7 @@ ToolResult MeasurementMidpoint(const json& arguments) {
 
     return {
         "Computed midpoint.",
-        BuildPointFeature(midpoint.lon, midpoint.lat)
+        FeatureBuilders::BuildPointFeature(midpoint.lon, midpoint.lat)
     };
 }
 
@@ -585,7 +331,7 @@ ToolResult MeasurementPointOnFeature(const json& arguments) {
 
     if (type == "Point") {
         const LonLatPoint p = ParsePointLike(node);
-        return {"Point lies on feature.", BuildPointFeature(p.lon, p.lat)};
+        return {"Point lies on feature.", FeatureBuilders::BuildPointFeature(p.lon, p.lat)};
     }
 
     if (type == "LineString") {
@@ -601,11 +347,11 @@ ToolResult MeasurementPointOnFeature(const json& arguments) {
             if (accumulated + seg >= half) {
                 const double bearing = InitialBearingDegrees(line[i - 1].lat, line[i - 1].lon, line[i].lat, line[i].lon);
                 const LonLatPoint p = DestinationPoint(line[i - 1].lat, line[i - 1].lon, bearing, half - accumulated);
-                return {"Computed point on line feature.", BuildPointFeature(p.lon, p.lat)};
+                return {"Computed point on line feature.", FeatureBuilders::BuildPointFeature(p.lon, p.lat)};
             }
             accumulated += seg;
         }
-        return {"Returned line endpoint.", BuildPointFeature(line.back().lon, line.back().lat)};
+        return {"Returned line endpoint.", FeatureBuilders::BuildPointFeature(line.back().lon, line.back().lat)};
     }
 
     if (type == "Polygon" || type == "MultiPolygon") {
@@ -613,13 +359,13 @@ ToolResult MeasurementPointOnFeature(const json& arguments) {
         const auto polygons = CollectPolygons(node);
         for (const auto& poly : polygons) {
             if (PointInPolygon(candidate.lon, candidate.lat, poly)) {
-                return {"Computed point on polygon feature.", BuildPointFeature(candidate.lon, candidate.lat)};
+                return {"Computed point on polygon feature.", FeatureBuilders::BuildPointFeature(candidate.lon, candidate.lat)};
             }
         }
 
         if (!polygons.empty() && !polygons[0].outerRing.empty()) {
             const LonLatPoint& fallback = polygons[0].outerRing.front();
-            return {"Center fell outside polygon; returned polygon vertex.", BuildPointFeature(fallback.lon, fallback.lat)};
+            return {"Center fell outside polygon; returned polygon vertex.", FeatureBuilders::BuildPointFeature(fallback.lon, fallback.lat)};
         }
     }
 
@@ -627,7 +373,7 @@ ToolResult MeasurementPointOnFeature(const json& arguments) {
     const LonLatPoint fallback = MeanCentroid(coords);
     return {
         "Returned centroid as point on feature fallback.",
-        BuildPointFeature(fallback.lon, fallback.lat)
+        FeatureBuilders::BuildPointFeature(fallback.lon, fallback.lat)
     };
 }
 
@@ -636,7 +382,7 @@ ToolResult MeasurementPointToLineDistance(const json& arguments) {
     const auto lineNode = ParseJsonLikeArgument(arguments, "line");
     const auto options = ParseOptionsArgument(arguments);
 
-    const std::string units = ReadUnits(options, "kilometers");
+    const std::string units = GeoUnits::ReadUnits(options, "kilometers");
     const std::string method = options.contains("method") ? options.at("method").get<std::string>() : "geodesic";
     if (method != "geodesic" && method != "planar") {
         throw std::invalid_argument("options.method must be 'geodesic' or 'planar'.");
@@ -682,18 +428,18 @@ ToolResult MeasurementRhumbDestination(const json& arguments) {
     const LonLatPoint origin = ParsePointLike(ParseJsonLikeArgument(arguments, "origin"));
     const auto options = ParseOptionsArgument(arguments);
 
-    const std::string units = ReadUnits(options, "kilometers");
+    const std::string units = GeoUnits::ReadUnits(options, "kilometers");
     const double distance = arguments.at("distance").get<double>();
     const double bearing = arguments.at("bearing").get<double>();
     if (distance < 0.0) {
         throw std::invalid_argument("distance must be >= 0.");
     }
 
-    const LonLatPoint destination = RhumbDestinationPoint(origin.lat, origin.lon, bearing, ToMeters(distance, units));
+    const LonLatPoint destination = RhumbDestinationPoint(origin.lat, origin.lon, bearing, GeoUnits::ToMeters(distance, units));
 
     return {
         "Computed rhumb destination.",
-        BuildPointFeature(destination.lon, destination.lat, options)
+        FeatureBuilders::BuildPointFeature(destination.lon, destination.lat, options)
     };
 }
 
@@ -702,7 +448,7 @@ ToolResult MeasurementRhumbDistance(const json& arguments) {
     const LonLatPoint p2 = ParsePointLike(ParseJsonLikeArgument(arguments, "point2"));
     const auto options = ParseOptionsArgument(arguments);
 
-    const std::string units = ReadUnits(options, "kilometers");
+    const std::string units = GeoUnits::ReadUnits(options, "kilometers");
     const double meters = RhumbDistanceMeters(p1.lat, p1.lon, p2.lat, p2.lon);
 
     return {
@@ -713,7 +459,7 @@ ToolResult MeasurementRhumbDistance(const json& arguments) {
 
 ToolResult MeasurementSquare(const json& arguments) {
     const auto bboxNode = ParseJsonLikeArgument(arguments, "bbox");
-    const Bbox bbox = ParseBbox(bboxNode);
+    const Bbox bbox = FeatureBuilders::ParseBbox(bboxNode);
 
     const double width = bbox.maxX - bbox.minX;
     const double height = bbox.maxY - bbox.minY;
@@ -813,8 +559,8 @@ ToolResult MeasurementPolygonTangents(const json& arguments) {
     json collection = {
         {"type", "FeatureCollection"},
         {"features", json::array({
-            BuildPointFeature(left.lon, left.lat),
-            BuildPointFeature(right.lon, right.lat)
+            FeatureBuilders::BuildPointFeature(left.lon, left.lat),
+            FeatureBuilders::BuildPointFeature(right.lon, right.lat)
         })}
     };
 
@@ -827,108 +573,110 @@ ToolResult MeasurementPolygonTangents(const json& arguments) {
 } // namespace
 
 void RegisterMeasurementTools(ToolRegistry& registry) {
+    using namespace MeasurementSchemas;
+
     registry.Register({
-        {"greatCircle", "Calculate the great circle path between two points.", kGreatCircleSchema},
+        {kGreatCircleName, kGreatCircleDescription, kGreatCircleSchema},
         MeasurementGreatCircle
     });
 
     registry.Register({
-        {"polygonTangents", "Calculate the two tangent points from a point to a polygon.", kPolygonTangentsSchema},
+        {kPolygonTangentsName, kPolygonTangentsDescription, kPolygonTangentsSchema},
         MeasurementPolygonTangents
     });
 
     registry.Register({
-        {"along", "Calculate a point at a specified distance along a LineString.", kAlongSchema},
+        {kAlongName, kAlongDescription, kAlongSchema},
         MeasurementAlong
     });
 
     registry.Register({
-        {"area", "Calculate the area of a polygon in square meters.", kAreaSchema},
+        {kAreaName, kAreaDescription, kAreaSchema},
         MeasurementArea
     });
 
     registry.Register({
-        {"bbox", "Calculate the bounding box of a GeoJSON object.", kGeoJsonSchema},
+        {kBboxName, kBboxDescription, kBboxSchema},
         MeasurementBbox
     });
 
     registry.Register({
-        {"bboxPolygon", "Convert a bounding box array to a Polygon feature.", kBboxSchema},
+        {kBboxPolygonName, kBboxPolygonDescription, kBboxPolygonSchema},
         MeasurementBboxPolygon
     });
 
     registry.Register({
-        {"bearing", "Calculate the bearing between two points.", kBearingSchema},
+        {kBearingName, kBearingDescription, kBearingSchema},
         MeasurementBearing
     });
 
     registry.Register({
-        {"center", "Calculate the center point of a FeatureCollection.", kGeoJsonSchema},
+        {kCenterName, kCenterDescription, kCenterSchema},
         MeasurementCenter
     });
 
     registry.Register({
-        {"centerOfMass", "Calculate the center of mass of a GeoJSON object.", kGeoJsonSchema},
+        {kCenterOfMassName, kCenterOfMassDescription, kCenterOfMassSchema},
         MeasurementCenterOfMass
     });
 
     registry.Register({
-        {"centroid", "Calculate the centroid of a GeoJSON object.", kGeoJsonSchema},
+        {kCentroidName, kCentroidDescription, kCentroidSchema},
         MeasurementCentroid
     });
 
     registry.Register({
-        {"destination", "Calculate a destination point given a starting point, distance, and bearing.", kDestinationSchema},
+        {kDestinationName, kDestinationDescription, kDestinationSchema},
         MeasurementDestination
     });
 
     registry.Register({
-        {"distance", "Calculate the distance between two points.", kDistanceSchema},
+        {kDistanceName, kDistanceDescription, kDistanceSchema},
         MeasurementDistance
     });
 
     registry.Register({
-        {"envelope", "Calculate the envelope (bounding box polygon) of a GeoJSON object.", kGeoJsonSchema},
+        {kEnvelopeName, kEnvelopeDescription, kEnvelopeSchema},
         MeasurementEnvelope
     });
 
     registry.Register({
-        {"length", "Calculate the length of a LineString or MultiLineString.", kLengthSchema},
+        {kLengthName, kLengthDescription, kLengthSchema},
         MeasurementLength
     });
 
     registry.Register({
-        {"midpoint", "Calculate the midpoint between two points.", kDistanceSchema},
+        {kMidpointName, kMidpointDescription, kMidpointSchema},
         MeasurementMidpoint
     });
 
     registry.Register({
-        {"pointOnFeature", "Find a point on a GeoJSON feature.", kGeoJsonSchema},
+        {kPointOnFeatureName, kPointOnFeatureDescription, kPointOnFeatureSchema},
         MeasurementPointOnFeature
     });
 
     registry.Register({
-        {"pointToLineDistance", "Calculate the shortest distance from a point to a line.", kPointToLineSchema},
+        {kPointToLineDistanceName, kPointToLineDistanceDescription, kPointToLineDistanceSchema},
         MeasurementPointToLineDistance
     });
 
     registry.Register({
-        {"rhumbBearing", "Calculate the rhumb bearing between two points.", kBearingSchema},
+        {kRhumbBearingName, kRhumbBearingDescription, kRhumbBearingSchema},
         MeasurementRhumbBearing
     });
 
     registry.Register({
-        {"rhumbDestination", "Calculate a destination point along a rhumb line.", kDestinationSchema},
+        {kRhumbDestinationName, kRhumbDestinationDescription, kRhumbDestinationSchema},
         MeasurementRhumbDestination
     });
 
     registry.Register({
-        {"rhumbDistance", "Calculate the rhumb distance between two points.", kDistanceSchema},
+        {kRhumbDistanceName, kRhumbDistanceDescription, kRhumbDistanceSchema},
         MeasurementRhumbDistance
     });
 
     registry.Register({
-        {"square", "Calculate the smallest square bounding box that contains a given bounding box.", kBboxSchema},
+        {kSquareName, kSquareDescription, kSquareSchema},
         MeasurementSquare
     });
 }

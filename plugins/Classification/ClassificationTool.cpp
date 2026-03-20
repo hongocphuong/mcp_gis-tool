@@ -1,4 +1,5 @@
 #include "ClassificationTool.h"
+#include "ClassificationSchemas.h"
 
 #include <cmath>
 #include <limits>
@@ -14,17 +15,6 @@ namespace {
 using json = nlohmann::json;
 using GeoJsonParsingUtils::ParseJsonLikeArgument;
 using GeoJsonParsingUtils::ParsePointLike;
-
-constexpr char kNearestPointSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "target_point": {"type": ["string", "object"]},
-        "points": {"type": ["string", "object"]}
-    },
-    "required": ["target_point", "points"],
-    "additionalProperties": false
-})";
 
 ToolResult ClassificationNearestPoint(const json& arguments) {
     const LonLatPoint target = ParsePointLike(ParseJsonLikeArgument(arguments, "target_point"));
@@ -73,10 +63,11 @@ ToolResult ClassificationNearestPoint(const json& arguments) {
 } // namespace
 
 void RegisterClassificationTools(ToolRegistry& registry) {
+    using namespace ClassificationSchemas;
     registry.Register({
         {
-            "nearestPoint",
-            "Find the nearest point to a target point.",
+            kNearestPointName,
+            kNearestPointDescription,
             kNearestPointSchema
         },
         ClassificationNearestPoint

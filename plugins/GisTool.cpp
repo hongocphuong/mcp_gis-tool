@@ -6,9 +6,11 @@
 #include "PluginAPI.h"
 #include "ToolRegistry.h"
 #include "json.hpp"
+#include "Aggregation/AggregationTool.h"
 #include "Boolean/BooleanTools.h"
 #include "Classification/ClassificationTool.h"
 #include "Measurement/MeasurementTools.h"
+#include "Transformation/TransformationTools.h"
 
 using json = nlohmann::json;
 
@@ -17,12 +19,16 @@ static std::once_flag gToolsRegisterFlag;
 
 static void EnsureToolsRegistered() {
     std::call_once(gToolsRegisterFlag, []() {
+        RegisterAggregationTools(registry);
         RegisterBooleanTools(registry);
         RegisterClassificationTools(registry);
         RegisterMeasurementTools(registry);
+        RegisterTransformationTools(registry);
     });
 }
 
+// Allocates a heap buffer for the response string.
+// The caller (PluginAPI consumer) is responsible for freeing this memory with delete[].
 static char* BuildResponseBuffer(const json& response) {
     const std::string result = response.dump();
     char* buffer = new char[result.length() + 1];

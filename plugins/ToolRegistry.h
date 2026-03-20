@@ -7,14 +7,12 @@
 #include "PluginAPI.h"
 #include "json.hpp"
 
-using json = nlohmann::json;
-
 struct ToolResult {
     std::string text;
-    json data;
+    nlohmann::json data;
 };
 
-using ToolHandler = ToolResult(*)(const json& arguments);
+using ToolHandler = ToolResult(*)(const nlohmann::json& arguments);
 
 struct ToolDefinition {
     PluginTool meta;
@@ -24,7 +22,7 @@ struct ToolDefinition {
 class ToolRegistry {
 public:
     void Register(const ToolDefinition& definition);
-    ToolResult Execute(const std::string& toolName, const json& arguments) const;
+    ToolResult Execute(const std::string& toolName, const nlohmann::json& arguments) const;
     const std::vector<PluginTool>& GetTools() const;
 
 private:

@@ -8,156 +8,34 @@
 
 #include "geojson/GeoJsonTraversal.h"
 #include "GisTypes.h"
+#include "GeoAlgorithms/GeoAlgorithms.h"
+#include "GeoJsonParsing/GeoJsonParsingUtils.h"
+#include "BooleanSchemas.h"
+
+using json = nlohmann::json;
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// JSON schemas
-// ---------------------------------------------------------------------------
-
-constexpr char kRingSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "ring": {"type": ["string", "array"]}
-    },
-    "required": ["ring"],
-    "additionalProperties": false
-})";
-
-constexpr char kTwoGeomSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "geojson1": {"type": ["string", "object"]},
-        "geojson2": {"type": ["string", "object"]}
-    },
-    "required": ["geojson1", "geojson2"],
-    "additionalProperties": false
-})";
-
-constexpr char kTwoLineSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "line1": {"type": ["string", "object"]},
-        "line2": {"type": ["string", "object"]}
-    },
-    "required": ["line1", "line2"],
-    "additionalProperties": false
-})";
-
-constexpr char kPointInPolygonSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "point":   {"type": ["string", "object", "array"]},
-        "polygon": {"type": ["string", "object"]},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["point", "polygon"],
-    "additionalProperties": false
-})";
-
-constexpr char kPointOnLineSchema[] = R"({
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-        "point":   {"type": ["string", "object", "array"]},
-        "line":    {"type": ["string", "object"]},
-        "options": {"type": ["string", "object"]}
-    },
-    "required": ["point", "line"],
-    "additionalProperties": false
-})";
-
-// ---------------------------------------------------------------------------
-// Argument parsing helpers (mirrors MeasurementTools pattern)
-// ---------------------------------------------------------------------------
-
-json ParseJsonArg(const json& arguments, const std::string& key) {
-    if (!arguments.contains(key)) {
-        throw std::invalid_argument("Missing required argument: " + key);
-    }
-    const auto& val = arguments[key];
-    if (val.is_string()) {
-        auto parsed = json::parse(val.get<std::string>(), nullptr, false);
-        if (parsed.is_discarded()) {
-            throw std::invalid_argument("Argument '" + key + "' is not valid JSON.");
-        }
-        return parsed;
-    }
-    return val;
-}
-
-json ParseOptionsArg(const json& arguments) {
-    if (!arguments.contains("options")) return json::object();
-    const auto& val = arguments["options"];
-    if (val.is_string()) {
-        auto parsed = json::parse(val.get<std::string>(), nullptr, false);
-        if (!parsed.is_discarded() && parsed.is_object()) return parsed;
-        return json::object();
-    }
-    return val.is_object() ? val : json::object();
-}
-
-// Unwrap Feature wrapper → bare geometry
-json ExtractGeometry(const json& node) {
-    if (!node.is_object()) return node;
-    if (node.contains("type") && node["type"] == "Feature") {
-        if (!node.contains("geometry") || node["geometry"].is_null()) {
-            throw std::invalid_argument("Feature has null geometry.");
-        }
-        return node["geometry"];
-    }
-    return node;
-}
-
-std::string GeomType(const json& geom) {
-    if (!geom.is_object() || !geom.contains("type") || !geom["type"].is_string()) {
-        throw std::invalid_argument("GeoJSON object must have a string 'type' field.");
-    }
-    return geom["type"].get<std::string>();
-}
-
+using GeoJsonParsingUtils::ExtractGeometry;
+using GeoJsonParsingUtils::GetGeometryType;
+using GeoJsonParsingUtils::ParseCoordinatePair;
+using GeoJsonParsingUtils::ParseCoordinatePairArray;
+using GeoJsonParsingUtils::ParseJsonLikeArgument;
+using GeoJsonParsingUtils::ParseOptionsArgument;
+using GeoJsonTraversal::CollectCoordinates;
+using GeoJsonTraversal::CollectPolygons;
 
 PlanarPoint ExtractPoint(const json& geom) {
-    const auto& c = geom.at("coordinates");
-    return {c[0].get<double>(), c[1].get<double>()};
-}
-
-std::vector<PlanarPoint> ParsePtArray(const json& arr) {
-    if (!arr.is_array()) {
-        throw std::invalid_argument("Expected an array of coordinate pairs.");
-    }
-    std::vector<PlanarPoint> pts;
-    pts.reserve(arr.size());
-    for (const auto& c : arr) {
-        if (!c.is_array() || c.size() < 2) {
-            throw std::invalid_argument("Each coordinate must be [x, y].");
-        }
-        pts.push_back({c[0].get<double>(), c[1].get<double>()});
-    }
-    return pts;
+    return ParseCoordinatePair(geom.at("coordinates"));
 }
 
 std::vector<PlanarPoint> ExtractLineCoords(const json& geom) {
-    return ParsePtArray(geom.at("coordinates"));
+    return ParseCoordinatePairArray(geom.at("coordinates"));
 }
 
 // ---------------------------------------------------------------------------
 // Core geometry algorithms
 // ---------------------------------------------------------------------------
-
-// Shoelace signed-area sum: > 0 → clockwise (GeoJSON / Turf.js convention)
-double RingSignedSum(const std::vector<PlanarPoint>& ring) {
-    double sum = 0.0;
-    const size_t n = ring.size();
-    for (size_t i = 0; i + 1 < n; ++i) {
-        sum += (ring[i + 1].x - ring[i].x) * (ring[i + 1].y + ring[i].y);
-    }
-    return sum;
-}
 
 // Point-in-ring ray casting
 bool PointInRing(const PlanarPoint& p, const std::vector<PlanarPoint>& ring) {
@@ -237,10 +115,10 @@ bool SegmentsIntersect(const PlanarPoint& a, const PlanarPoint& b, const PlanarP
 // Extract all edge segments from Line/Polygon geometries
 std::vector<std::pair<PlanarPoint, PlanarPoint>> GetSegments(const json& geom) {
     std::vector<std::pair<PlanarPoint, PlanarPoint>> segs;
-    const std::string type = GeomType(geom);
+    const std::string type = GetGeometryType(geom);
 
     auto addSegs = [&](const json& coordArr) {
-        const auto pts = ParsePtArray(coordArr);
+        const auto pts = ParseCoordinatePairArray(coordArr);
         for (size_t i = 1; i < pts.size(); ++i) {
             segs.push_back({pts[i - 1], pts[i]});
         }
@@ -261,14 +139,14 @@ std::vector<std::pair<PlanarPoint, PlanarPoint>> GetSegments(const json& geom) {
 
 // Generic intersects test for any two geometries
 bool GeometriesIntersect(const json& geom1, const json& geom2) {
-    const std::string type1 = GeomType(geom1);
-    const std::string type2 = GeomType(geom2);
+    const std::string type1 = GetGeometryType(geom1);
+    const std::string type2 = GetGeometryType(geom2);
 
     // Point vs …
     if (type1 == "Point") {
-        const PlanarPoint p= ExtractPoint(geom1);
+        const PlanarPoint p = ExtractPoint(geom1);
         if (type2 == "Point") {
-            const PlanarPoint p2= ExtractPoint(geom2);
+            const PlanarPoint p2 = ExtractPoint(geom2);
             return std::fabs(p.x - p2.x) < 1e-12 && std::fabs(p.y - p2.y) < 1e-12;
         }
         if (type2 == "LineString" || type2 == "MultiLineString") {
@@ -295,12 +173,12 @@ bool GeometriesIntersect(const json& geom1, const json& geom2) {
 
     // One geometry might be fully inside the other (no boundary crossing)
     if (!segs2.empty()) {
-        const PlanarPoint probe= segs2[0].first;
+        const PlanarPoint probe = segs2[0].first;
         for (const auto& poly : CollectPolygons(geom1))
             if (PointInPolygon(probe, poly, false)) return true;
     }
     if (!segs1.empty()) {
-        const PlanarPoint probe= segs1[0].first;
+        const PlanarPoint probe = segs1[0].first;
         for (const auto& poly : CollectPolygons(geom2))
             if (PointInPolygon(probe, poly, false)) return true;
     }
@@ -310,7 +188,7 @@ bool GeometriesIntersect(const json& geom1, const json& geom2) {
 
 // True if every coordinate of geom2 lies inside geom1 (geom1 must be polygon)
 bool GeomContainsAllCoords(const json& geom1, const json& geom2) {
-    const std::string type1 = GeomType(geom1);
+    const std::string type1 = GetGeometryType(geom1);
     if (type1 != "Polygon" && type1 != "MultiPolygon") return false;
 
     const auto polys = CollectPolygons(geom1);
@@ -318,7 +196,7 @@ bool GeomContainsAllCoords(const json& geom1, const json& geom2) {
     if (coords.empty()) return false;
 
     for (const auto& c : coords) {
-        const PlanarPoint p= {c.lon, c.lat};
+        const PlanarPoint p = {c.lon, c.lat};
         bool insideAny = false;
         for (const auto& poly : polys) {
             if (PointInPolygon(p, poly, false)) { insideAny = true; break; }
@@ -333,16 +211,16 @@ bool GeomContainsAllCoords(const json& geom1, const json& geom2) {
 // ---------------------------------------------------------------------------
 
 ToolResult BooleanClockwise(const json& arguments) {
-    const auto ring = ParsePtArray(ParseJsonArg(arguments, "ring"));
+    const auto ring = ParseCoordinatePairArray(ParseJsonLikeArgument(arguments, "ring"));
     return {
         "Checked ring winding order.",
-        {{"value", RingSignedSum(ring) > 0.0}}
+        {{"value", GeoAlgorithms::ComputeRingSignedArea(ring) < 0.0}}
     };
 }
 
 ToolResult BooleanContains(const json& arguments) {
-    const auto g1 = ExtractGeometry(ParseJsonArg(arguments, "geojson1"));
-    const auto g2 = ExtractGeometry(ParseJsonArg(arguments, "geojson2"));
+    const auto g1 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson1"));
+    const auto g2 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson2"));
     return {
         "Checked if geojson1 contains geojson2.",
         {{"value", GeomContainsAllCoords(g1, g2)}}
@@ -350,10 +228,10 @@ ToolResult BooleanContains(const json& arguments) {
 }
 
 ToolResult BooleanCrosses(const json& arguments) {
-    const auto g1 = ExtractGeometry(ParseJsonArg(arguments, "geojson1"));
-    const auto g2 = ExtractGeometry(ParseJsonArg(arguments, "geojson2"));
-    const std::string type1 = GeomType(g1);
-    const std::string type2 = GeomType(g2);
+    const auto g1 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson1"));
+    const auto g2 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson2"));
+    const std::string type1 = GetGeometryType(g1);
+    const std::string type2 = GetGeometryType(g2);
 
     bool result = false;
 
@@ -376,7 +254,7 @@ ToolResult BooleanCrosses(const json& arguments) {
         const auto polys = CollectPolygons(g2);
         bool someIn = false, someOut = false;
         for (const auto& c : CollectCoordinates(g1)) {
-            const PlanarPoint p= {c.lon, c.lat};
+            const PlanarPoint p = {c.lon, c.lat};
             bool inside = false;
             for (const auto& poly : polys)
                 if (PointInPolygon(p, poly, true)) { inside = true; break; }
@@ -390,7 +268,7 @@ ToolResult BooleanCrosses(const json& arguments) {
         const auto polys = CollectPolygons(g1);
         bool someIn = false, someOut = false;
         for (const auto& c : CollectCoordinates(g2)) {
-            const PlanarPoint p= {c.lon, c.lat};
+            const PlanarPoint p = {c.lon, c.lat};
             bool inside = false;
             for (const auto& poly : polys)
                 if (PointInPolygon(p, poly, true)) { inside = true; break; }
@@ -403,8 +281,8 @@ ToolResult BooleanCrosses(const json& arguments) {
 }
 
 ToolResult BooleanDisjoint(const json& arguments) {
-    const auto g1 = ExtractGeometry(ParseJsonArg(arguments, "geojson1"));
-    const auto g2 = ExtractGeometry(ParseJsonArg(arguments, "geojson2"));
+    const auto g1 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson1"));
+    const auto g2 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson2"));
     return {
         "Checked if geometries are disjoint.",
         {{"value", !GeometriesIntersect(g1, g2)}}
@@ -412,10 +290,10 @@ ToolResult BooleanDisjoint(const json& arguments) {
 }
 
 ToolResult BooleanEqual(const json& arguments) {
-    const auto g1 = ExtractGeometry(ParseJsonArg(arguments, "geojson1"));
-    const auto g2 = ExtractGeometry(ParseJsonArg(arguments, "geojson2"));
+    const auto g1 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson1"));
+    const auto g2 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson2"));
 
-    if (GeomType(g1) != GeomType(g2)) {
+    if (GetGeometryType(g1) != GetGeometryType(g2)) {
         return {"Checked geometry equality.", {{"value", false}}};
     }
 
@@ -436,8 +314,8 @@ ToolResult BooleanEqual(const json& arguments) {
 }
 
 ToolResult BooleanOverlap(const json& arguments) {
-    const auto g1 = ExtractGeometry(ParseJsonArg(arguments, "geojson1"));
-    const auto g2 = ExtractGeometry(ParseJsonArg(arguments, "geojson2"));
+    const auto g1 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson1"));
+    const auto g2 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson2"));
 
     if (!GeometriesIntersect(g1, g2)) {
         return {"Checked if geometries overlap.", {{"value", false}}};
@@ -453,10 +331,10 @@ ToolResult BooleanOverlap(const json& arguments) {
 }
 
 ToolResult BooleanParallel(const json& arguments) {
-    const auto l1 = ExtractGeometry(ParseJsonArg(arguments, "line1"));
-    const auto l2 = ExtractGeometry(ParseJsonArg(arguments, "line2"));
+    const auto l1 = ExtractGeometry(ParseJsonLikeArgument(arguments, "line1"));
+    const auto l2 = ExtractGeometry(ParseJsonLikeArgument(arguments, "line2"));
 
-    if (GeomType(l1) != "LineString" || GeomType(l2) != "LineString") {
+    if (GetGeometryType(l1) != "LineString" || GetGeometryType(l2) != "LineString") {
         throw std::invalid_argument("line1 and line2 must both be LineString geometries.");
     }
 
@@ -487,11 +365,11 @@ ToolResult BooleanParallel(const json& arguments) {
 }
 
 ToolResult BooleanPointInPolygon(const json& arguments) {
-    const auto pointGeom = ExtractGeometry(ParseJsonArg(arguments, "point"));
-    const auto polyGeom  = ExtractGeometry(ParseJsonArg(arguments, "polygon"));
-    const auto options   = ParseOptionsArg(arguments);
+    const auto pointGeom = ExtractGeometry(ParseJsonLikeArgument(arguments, "point"));
+    const auto polyGeom  = ExtractGeometry(ParseJsonLikeArgument(arguments, "polygon"));
+    const auto options   = ParseOptionsArgument(arguments);
 
-    if (GeomType(pointGeom) != "Point") {
+    if (GetGeometryType(pointGeom) != "Point") {
         throw std::invalid_argument("point must be a GeoJSON Point geometry.");
     }
 
@@ -499,7 +377,7 @@ ToolResult BooleanPointInPolygon(const json& arguments) {
                                 options["ignoreBoundary"].is_boolean() &&
                                 options["ignoreBoundary"].get<bool>();
 
-    const PlanarPoint p= ExtractPoint(pointGeom);
+    const PlanarPoint p = ExtractPoint(pointGeom);
     bool result = false;
     for (const auto& poly : CollectPolygons(polyGeom)) {
         if (PointInPolygon(p, poly, ignoreBoundary)) { result = true; break; }
@@ -512,15 +390,15 @@ ToolResult BooleanPointInPolygon(const json& arguments) {
 }
 
 ToolResult BooleanPointOnLine(const json& arguments) {
-    const auto pointGeom = ExtractGeometry(ParseJsonArg(arguments, "point"));
-    const auto lineGeom  = ExtractGeometry(ParseJsonArg(arguments, "line"));
-    const auto options   = ParseOptionsArg(arguments);
+    const auto pointGeom = ExtractGeometry(ParseJsonLikeArgument(arguments, "point"));
+    const auto lineGeom  = ExtractGeometry(ParseJsonLikeArgument(arguments, "line"));
+    const auto options   = ParseOptionsArgument(arguments);
 
-    if (GeomType(pointGeom) != "Point") {
+    if (GetGeometryType(pointGeom) != "Point") {
         throw std::invalid_argument("point must be a GeoJSON Point geometry.");
     }
 
-    const std::string lineType = GeomType(lineGeom);
+    const std::string lineType = GetGeometryType(lineGeom);
     if (lineType != "LineString" && lineType != "MultiLineString") {
         throw std::invalid_argument("line must be a LineString or MultiLineString geometry.");
     }
@@ -529,13 +407,13 @@ ToolResult BooleanPointOnLine(const json& arguments) {
                                    options["ignoreEndVertices"].is_boolean() &&
                                    options["ignoreEndVertices"].get<bool>();
 
-    const PlanarPoint p= ExtractPoint(pointGeom);
+    const PlanarPoint p = ExtractPoint(pointGeom);
 
     // Collect global endpoints for ignoreEndVertices check
     std::vector<PlanarPoint> endpoints;
     if (ignoreEndVertices) {
         auto addEndpts = [&](const json& coordArr) {
-            const auto pts = ParsePtArray(coordArr);
+            const auto pts = ParseCoordinatePairArray(coordArr);
             if (pts.size() >= 2) {
                 endpoints.push_back(pts.front());
                 endpoints.push_back(pts.back());
@@ -567,8 +445,8 @@ ToolResult BooleanPointOnLine(const json& arguments) {
 }
 
 ToolResult BooleanWithin(const json& arguments) {
-    const auto g1 = ExtractGeometry(ParseJsonArg(arguments, "geojson1"));
-    const auto g2 = ExtractGeometry(ParseJsonArg(arguments, "geojson2"));
+    const auto g1 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson1"));
+    const auto g2 = ExtractGeometry(ParseJsonLikeArgument(arguments, "geojson2"));
     return {
         "Checked if geojson1 is within geojson2.",
         {{"value", GeomContainsAllCoords(g2, g1)}}
@@ -582,44 +460,46 @@ ToolResult BooleanWithin(const json& arguments) {
 // ---------------------------------------------------------------------------
 
 void RegisterBooleanTools(ToolRegistry& registry) {
+    using namespace BooleanSchemas;
+
     registry.Register({
-        {"booleanClockwise", "Check if a ring is clockwise.", kRingSchema},
+        {kClockwiseName, kClockwiseDescription, kClockwiseSchema},
         BooleanClockwise
     });
     registry.Register({
-        {"booleanContains", "Check if the first geometry contains the second geometry.", kTwoGeomSchema},
+        {kContainsName, kContainsDescription, kContainsSchema},
         BooleanContains
     });
     registry.Register({
-        {"booleanCrosses", "Check if two geometries cross each other.", kTwoGeomSchema},
+        {kCrossesName, kCrossesDescription, kCrossesSchema},
         BooleanCrosses
     });
     registry.Register({
-        {"booleanDisjoint", "Check if two geometries are disjoint (have no common points).", kTwoGeomSchema},
+        {kDisjointName, kDisjointDescription, kDisjointSchema},
         BooleanDisjoint
     });
     registry.Register({
-        {"booleanEqual", "Check if two geometries are equal.", kTwoGeomSchema},
+        {kEqualName, kEqualDescription, kEqualSchema},
         BooleanEqual
     });
     registry.Register({
-        {"booleanOverlap", "Check if two geometries overlap.", kTwoGeomSchema},
+        {kOverlapName, kOverlapDescription, kOverlapSchema},
         BooleanOverlap
     });
     registry.Register({
-        {"booleanParallel", "Check if two line segments are parallel.", kTwoLineSchema},
+        {kParallelName, kParallelDescription, kParallelSchema},
         BooleanParallel
     });
     registry.Register({
-        {"booleanPointInPolygon", "Check if a point is inside a polygon.", kPointInPolygonSchema},
+        {kPointInPolygonName, kPointInPolygonDescription, kPointInPolygonSchema},
         BooleanPointInPolygon
     });
     registry.Register({
-        {"booleanPointOnLine", "Check if a point is on a line.", kPointOnLineSchema},
+        {kPointOnLineName, kPointOnLineDescription, kPointOnLineSchema},
         BooleanPointOnLine
     });
     registry.Register({
-        {"booleanWithin", "Check if the first geometry is within the second geometry.", kTwoGeomSchema},
+        {kWithinName, kWithinDescription, kWithinSchema},
         BooleanWithin
     });
 }
